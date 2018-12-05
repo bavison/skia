@@ -17,7 +17,7 @@
 #include "SkImageEncoder.h"
 #include "SkResourceCache.h"
 
-#if defined(SK_ARM_HAS_NEON)
+#if defined(SK_ARM_HAS_NEON) || defined(SK_ARM_HAS_OPTIONAL_NEON)
 // These are defined in src/opts/SkBitmapProcState_arm_neon.cpp
 extern const SkBitmapProcState::SampleProc32 gSkBitmapProcStateSample32_neon[];
 #endif

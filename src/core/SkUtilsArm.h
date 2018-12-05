@@ -12,6 +12,9 @@
 
 #if defined(SK_ARM_HAS_NEON)
     #define SK_ARM_NEON_WRAP(x) (x ## _neon)
+#elif defined(SK_ARM_HAS_OPTIONAL_NEON)
+    #include "SkCpu.h"
+    #define SK_ARM_NEON_WRAP(x) (SkCpu::Supports(SkCpu::NEON) ? (x ## _neon) : (x))
 #else
     #define SK_ARM_NEON_WRAP(x) (x)
 #endif
