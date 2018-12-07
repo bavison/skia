@@ -23,6 +23,7 @@ extern const SkBitmapProcState::SampleProc32 gSkBitmapProcStateSample32_neon[];
 #endif
 
 extern void Clamp_S32_opaque_D32_nofilter_DX_shaderproc(const void*, int, int, uint32_t*, int);
+extern void Clamp_S32_opaque_D32_nofilter_DX_shaderproc_neon(const void*, int, int, uint32_t*, int);
 
 #define   NAME_WRAP(x)  x
 #include "SkBitmapProcState_filter.h"
@@ -220,8 +221,8 @@ bool SkBitmapProcState::chooseScanlineProcs(bool trivialMatrix, bool clampClamp)
         fSampleProc32 = SK_ARM_NEON_WRAP(gSkBitmapProcStateSample32)[index];
 
         // our special-case shaderprocs
-        if (S32_opaque_D32_nofilter_DX == fSampleProc32 && clampClamp) {
-            fShaderProc32 = Clamp_S32_opaque_D32_nofilter_DX_shaderproc;
+        if (index == 2 && clampClamp) {
+            fShaderProc32 = SK_ARM_NEON_WRAP(Clamp_S32_opaque_D32_nofilter_DX_shaderproc);
         }
 
         if (nullptr == fShaderProc32) {
@@ -600,52 +601,195 @@ int SkBitmapProcState::maxCountForBufferSize(size_t bufferSize) const {
 
 ///////////////////////
 
-void  Clamp_S32_opaque_D32_nofilter_DX_shaderproc(const void* sIn, int x, int y,
-                                                  SkPMColor* SK_RESTRICT dst, int count) {
-    const SkBitmapProcState& s = *static_cast<const SkBitmapProcState*>(sIn);
-    SkASSERT((s.fInvType & ~(SkMatrix::kTranslate_Mask |
-                             SkMatrix::kScale_Mask)) == 0);
+#if (defined(SK_ARM_HAS_NEON) || defined(SK_ARM_HAS_OPTIONAL_NEON)) && !defined(__ARM_64BIT_STATE)
+static inline void Clamp_S32_opaque_D32_nofilter_DX_shaderproc_core_neon(SkPMColor* __restrict__ &dst, const SkPMColor* __restrict__ src, int core, SkFractionalInt fx, const SkFractionalInt dx)
+{
+    const SkPMColor*p = src + (int32_t)(fx >> 32);
+    uint32_t accum = (uint32_t) fx;
+    const SkPMColor *p2;
+    __asm__ volatile (
+            "cmp     %[core], #0           \n\t"
+            "it      ne                    \n\t"
+            "tstne   %[dst], #0xc          \n\t"
+            "beq     2f                    \n\t"
+            "1:                            \n\t"
+            "vldr    s0, [%[p]]            \n\t"
+            "adds    %[accum], %[dx]       \n\t"
+            "ite     cc                    \n\t"
+            "addcc   %[p], %[inc1]         \n\t"
+            "addcs   %[p], %[inc2]         \n\t"
+            "vstm    %[dst]!, {s0}         \n\t"
+            "subs    %[core], #1           \n\t"
+            "it      ne                    \n\t"
+            "tstne   %[dst], #0xc          \n\t"
+            "bne     1b                    \n\t"
+            "2:                            \n\t"
+            "adds    %[accum], %[dx]       \n\t"
+            "ite     cc                    \n\t"
+            "addcc   %[p2], %[p], %[inc1]  \n\t"
+            "addcs   %[p2], %[p], %[inc2]  \n\t"
+            "subs    %[core], #4           \n\t"
+            "bcc     4f                    \n\t"
+            "3:                            \n\t"
+            "vldr    s0, [%[p]]            \n\t"
+            "adds    %[accum], %[dx]       \n\t"
+            "ite     cc                    \n\t"
+            "addcc   %[p], %[p2], %[inc1]  \n\t"
+            "addcs   %[p], %[p2], %[inc2]  \n\t"
+            "vldr    s1, [%[p2]]           \n\t"
+            "adds    %[accum], %[dx]       \n\t"
+            "ite     cc                    \n\t"
+            "addcc   %[p2], %[p], %[inc1]  \n\t"
+            "addcs   %[p2], %[p], %[inc2]  \n\t"
+            "vldr    s2, [%[p]]            \n\t"
+            "adds    %[accum], %[dx]       \n\t"
+            "ite     cc                    \n\t"
+            "addcc   %[p], %[p2], %[inc1]  \n\t"
+            "addcs   %[p], %[p2], %[inc2]  \n\t"
+            "vldr    s3, [%[p2]]           \n\t"
+            "adds    %[accum], %[dx]       \n\t"
+            "ite     cc                    \n\t"
+            "addcc   %[p2], %[p], %[inc1]  \n\t"
+            "addcs   %[p2], %[p], %[inc2]  \n\t"
+            "vst1.32 {q0}, [%[dst] :128]!  \n\t"
+            "subs    %[core], #4           \n\t"
+            "bcs     3b                    \n\t"
+            "4:                            \n\t"
+            "adds    %[core], #4           \n\t"
+            "beq     6f                    \n\t"
+            "5:                            \n\t"
+            "vldr    s0, [%[p]]            \n\t"
+            "mov     %[p], %[p2]           \n\t"
+            "adds    %[accum], %[dx]       \n\t"
+            "ite     cc                    \n\t"
+            "addcc   %[p2], %[p], %[inc1]  \n\t"
+            "addcs   %[p2], %[p], %[inc2]  \n\t"
+            "vstm    %[dst]!, {s0}         \n\t"
+            "subs    %[core], #1           \n\t"
+            "bne     5b                    \n\t"
+            "6:                            \n\t"
+    : // Outputs
+            [accum]"+r"(accum),
+             [core]"+r"(core),
+              [dst]"+r"(dst),
+                [p]"+r"(p),
+               [p2]"=&r"(p2)
+    : // Inputs
+              [dx]"r"((int32_t) dx),
+            [inc1]"r"((int32_t)(dx >> 32) * 4),
+            [inc2]"r"(((int32_t)(dx >> 32) + 1) * 4)
+    : // Clobbers
+            "cc", "memory"
+    );
+}
+#endif
 
-    const unsigned maxX = s.fPixmap.width() - 1;
-    SkFractionalInt fx;
-    int dstY;
-    {
-        const SkBitmapProcStateAutoMapper mapper(s, x, y);
-        const unsigned maxY = s.fPixmap.height() - 1;
-        dstY = SkClampMax(mapper.intY(), maxY);
-        fx = mapper.fractionalIntX();
-    }
-
-    const SkPMColor* SK_RESTRICT src = s.fPixmap.addr32(0, dstY);
-    const SkFractionalInt dx = s.fInvSxFractionalInt;
-
-    // Check if we're safely inside [0...maxX] so no need to clamp each computed index.
-    //
-    if ((uint64_t)SkFractionalIntToInt(fx) <= maxX &&
-        (uint64_t)SkFractionalIntToInt(fx + dx * (count - 1)) <= maxX)
-    {
-        int count4 = count >> 2;
-        for (int i = 0; i < count4; ++i) {
-            SkPMColor src0 = src[SkFractionalIntToInt(fx)]; fx += dx;
-            SkPMColor src1 = src[SkFractionalIntToInt(fx)]; fx += dx;
-            SkPMColor src2 = src[SkFractionalIntToInt(fx)]; fx += dx;
-            SkPMColor src3 = src[SkFractionalIntToInt(fx)]; fx += dx;
-            dst[0] = src0;
-            dst[1] = src1;
-            dst[2] = src2;
-            dst[3] = src3;
-            dst += 4;
-        }
-        for (int i = (count4 << 2); i < count; ++i) {
-            unsigned index = SkFractionalIntToInt(fx);
-            SkASSERT(index <= maxX);
-            *dst++ = src[index];
-            fx += dx;
-        }
-    } else {
-        for (int i = 0; i < count; ++i) {
-            dst[i] = src[SkClampMax(SkFractionalIntToInt(fx), maxX)];
-            fx += dx;
-        }
+#if !defined(SK_HAS_ARM_NEON) || defined(__ARM_64BIT_STATE)
+static inline void Clamp_S32_opaque_D32_nofilter_DX_shaderproc_core(SkPMColor* __restrict__ &dst, const SkPMColor* __restrict__ src, int core, SkFractionalInt fx, const SkFractionalInt dx)
+{
+    const SkPMColor*p = src + (int32_t)(fx >> 32);
+    uint32_t accum = (uint32_t) fx;
+    for (; core > 0; --core) {
+        *dst++ = *p;
+        uint32_t prev_accum = accum;
+        accum += (int32_t) dx;
+        if (accum < prev_accum) /* i.e. carry set */
+            p += (int32_t)(dx >> 32) + 1;
+        else
+            p += (int32_t)(dx >> 32);
     }
 }
+#endif
+
+#define Clamp_S32_opaque_D32_nofilter_DX_shaderproc_template(SUFFIX)                               \
+void  Clamp_S32_opaque_D32_nofilter_DX_shaderproc##SUFFIX(const void* sIn, int x, int y,           \
+                                                          SkPMColor* SK_RESTRICT dst, int count) { \
+    const SkBitmapProcState& s = *static_cast<const SkBitmapProcState*>(sIn);                      \
+    SkASSERT((s.fInvType & ~(SkMatrix::kTranslate_Mask |                                           \
+                             SkMatrix::kScale_Mask)) == 0);                                        \
+                                                                                                   \
+    const unsigned maxX = s.fPixmap.width() - 1;                                                   \
+    SkFractionalInt fx;                                                                            \
+    int dstY;                                                                                      \
+    {                                                                                              \
+        const SkBitmapProcStateAutoMapper mapper(s, x, y);                                         \
+        const unsigned maxY = s.fPixmap.height() - 1;                                              \
+        dstY = SkClampMax(mapper.intY(), maxY);                                                    \
+        fx = mapper.fractionalIntX();                                                              \
+    }                                                                                              \
+                                                                                                   \
+    const SkPMColor* SK_RESTRICT src = s.fPixmap.addr32(0, dstY);                                  \
+    const SkFractionalInt dx = s.fInvSxFractionalInt;                                              \
+                                                                                                   \
+    int core;                                                                                      \
+                                                                                                   \
+    /* The unscaled case is easily common enough to be worth special-casing.                       \
+     * The system memcpy() is typically already heavily optimized, so just use that.               \
+     */                                                                                            \
+    if (dx == 0x100000000ll) {                                                                     \
+        int32_t fx_integer = fx >> 32;                                                             \
+        if (fx_integer < 0) {                                                                      \
+            int left = SkMin32(-fx_integer, count);                                                \
+            fx_integer += left;                                                                    \
+            count -= left;                                                                         \
+            for (; left > 0; --left)                                                               \
+                *dst++ = src[0];                                                                   \
+        }                                                                                          \
+        if (fx_integer < (int)maxX) {                                                              \
+            core = SkMin32((int)maxX + 1 - fx_integer, count);                                     \
+            memcpy(dst, src + fx_integer, core * sizeof (uint32_t));                               \
+            dst += core;                                                                           \
+            count -= core;                                                                         \
+        }                                                                                          \
+        for (; count > 0; --count) {                                                               \
+            *dst++ = src[maxX];                                                                    \
+        }                                                                                          \
+    }                                                                                              \
+                                                                                                   \
+    /* Handle other non-reflected scale factors. */                                                \
+    else if (dx >= 0) {                                                                            \
+        for (; fx < 0 && count > 0; --count) {                                                     \
+            *dst++ = src[0];                                                                       \
+            fx += dx;                                                                              \
+        }                                                                                          \
+        if ((int32_t)(fx >> 32) > (int)maxX)                                                       \
+            core = 0;                                                                              \
+        else if ((int32_t)((fx + (count - 1) * dx) >> 32) <= (int)maxX)                            \
+            core = count;                                                                          \
+        else                                                                                       \
+            core = (int32_t)(((((SkFractionalInt) maxX) << 32) + 0xffffffff - fx) / dx) + 1;       \
+        Clamp_S32_opaque_D32_nofilter_DX_shaderproc_core##SUFFIX(dst, src, core, fx, dx);          \
+        count -= core;                                                                             \
+        for (; count > 0; --count) {                                                               \
+            *dst++ = src[maxX];                                                                    \
+        }                                                                                          \
+    }                                                                                              \
+                                                                                                   \
+    /* It's not clear if reflection is used, but it's a relatively                                 \
+     * simple variation on the non-reflected case. */                                              \
+    else                                                                                           \
+    {                                                                                              \
+        for (; (int32_t)(fx >> 32) > (int)maxX && count > 0; --count) {                            \
+            *dst++ = src[maxX];                                                                    \
+            fx += dx;                                                                              \
+        }                                                                                          \
+        if (fx < 0)                                                                                \
+            core = 0;                                                                              \
+        else if (fx + (count - 1) * dx >= 0)                                                       \
+            core = count;                                                                          \
+        else                                                                                       \
+            core = (int32_t)(fx / -dx) + 1;                                                        \
+        Clamp_S32_opaque_D32_nofilter_DX_shaderproc_core##SUFFIX(dst, src, core, fx, dx);          \
+        count -= core;                                                                             \
+        for (; count > 0; --count) {                                                               \
+            *dst++ = src[0];                                                                       \
+        }                                                                                          \
+    }                                                                                              \
+}
+
+#if (defined(SK_ARM_HAS_NEON) || defined(SK_ARM_HAS_OPTIONAL_NEON)) && !defined(__ARM_64BIT_STATE)
+Clamp_S32_opaque_D32_nofilter_DX_shaderproc_template(_neon)
+#endif
+#if !defined(SK_HAS_ARM_NEON) || defined(__ARM_64BIT_STATE)
+Clamp_S32_opaque_D32_nofilter_DX_shaderproc_template()
+#endif
