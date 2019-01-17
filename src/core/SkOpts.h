@@ -58,6 +58,9 @@ namespace SkOpts {
     extern void (*S32_alpha_D32_filter_DX)(const SkBitmapProcState&,
                                            const uint32_t* xy, int count, SkPMColor*);
 
+    extern void (*S32_opaque_D32_filter_DX)(const SkBitmapProcState&,
+                                            const uint32_t* xy, int count, SkPMColor*);
+
 #define M(st) +1
     // We can't necessarily express the type of SkJumper stage functions here,
     // so we just use this void(*)(void) as a stand-in.
