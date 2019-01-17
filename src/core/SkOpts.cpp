@@ -75,6 +75,11 @@ namespace SkOpts {
     DEFINE_DEFAULT(hash_fn);
 
     DEFINE_DEFAULT(S32_alpha_D32_filter_DX);
+#if defined(SK_ARM_HAS_NEON) && !defined(__ARM_64BIT_STATE)
+    DEFINE_DEFAULT(S32_opaque_D32_filter_DX);
+#else
+    decltype(S32_opaque_D32_filter_DX) S32_opaque_D32_filter_DX = SK_OPTS_NS::S32_alpha_D32_filter_DX;
+#endif
 #undef DEFINE_DEFAULT
 
 #define M(st) (StageFn)SK_OPTS_NS::st,

@@ -410,6 +410,11 @@ bool SkBitmapProcState::chooseProcs() {
     SkASSERT(fMatrixProc);
 
     if (fFilterQuality > kNone_SkFilterQuality) {
+#if defined(SK_ARM_HAS_NEON) && !defined(__ARM_64BIT_STATE)
+        if (fAlphaScale == 256)
+            fSampleProc32 = SkOpts::S32_opaque_D32_filter_DX;
+        else
+#endif
         fSampleProc32 = SkOpts::S32_alpha_D32_filter_DX;
     } else {
         fSampleProc32 = S32_alpha_D32_nofilter_DX;
