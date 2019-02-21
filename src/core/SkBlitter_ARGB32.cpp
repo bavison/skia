@@ -11,6 +11,7 @@
 #include "SkShader.h"
 #include "SkUtils.h"
 #include "SkXfermodePriv.h"
+#include "SkBlitMask_opts.h"
 
 static inline int upscale_31_to_32(int value) {
     SkASSERT((unsigned)value <= 31);
@@ -1152,23 +1153,6 @@ void SkARGB32_Shader_Blitter::blitAntiH(int x, int y, const SkAlpha antialias[],
     }
 }
 
-static void blend_row_A8(SkPMColor* dst, const void* vmask, const SkPMColor* src, int n) {
-    auto mask = (const uint8_t*)vmask;
-
-#ifdef SK_SUPPORT_LEGACY_A8_MASKBLITTER
-    for (int i = 0; i < n; ++i) {
-        if (mask[i]) {
-            dst[i] = SkBlendARGB32(src[i], dst[i], mask[i]);
-        }
-    }
-#else
-    Sk4px::MapDstSrcAlpha(n, dst, src, mask, [](const Sk4px& d, const Sk4px& s, const Sk4px& aa) {
-        const auto s_aa = s.approxMulDiv255(aa);
-        return s_aa + d.approxMulDiv255(s_aa.alphas().inv());
-    });
-#endif
-}
-
 static void blend_row_A8_opaque(SkPMColor* dst, const void* vmask, const SkPMColor* src, int n) {
     auto mask = (const uint8_t*)vmask;
 
@@ -1281,7 +1265,8 @@ void SkARGB32_Shader_Blitter::blitMask(const SkMask& mask, const SkIRect& clip) 
         if (mask.fFormat == SkMask::kA8_Format && opaque) {
             blend_row = blend_row_A8_opaque;
         } else if (mask.fFormat == SkMask::kA8_Format) {
-            blend_row = blend_row_A8;
+            // blend_row_A8 has been ported to SkOpts, but not the others yet
+            blend_row = SkOpts::blit_row_s32a_a8;
         } else if (mask.fFormat == SkMask::kLCD16_Format && opaque) {
             blend_row = blend_row_LCD16_opaque;
         } else if (mask.fFormat == SkMask::kLCD16_Format) {
