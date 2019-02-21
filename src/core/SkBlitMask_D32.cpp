@@ -134,16 +134,6 @@ static void BW_RowProc_Opaque(
     }
 }
 
-static void A8_RowProc_Blend(
-        SkPMColor* SK_RESTRICT dst, const void* maskIn, const SkPMColor* SK_RESTRICT src, int count) {
-    const uint8_t* SK_RESTRICT mask = static_cast<const uint8_t*>(maskIn);
-    for (int i = 0; i < count; ++i) {
-        if (mask[i]) {
-            dst[i] = SkBlendARGB32(src[i], dst[i], mask[i]);
-        }
-    }
-}
-
 // expand the steps that SkAlphaMulQ performs, but this way we can
 //  exand.. add.. combine
 // instead of
@@ -275,6 +265,11 @@ static void LCD16_RowProc_Opaque(
 SkBlitMask::RowProc SkBlitMask::RowFactory(SkColorType ct,
                                            SkMask::Format format,
                                            RowFlags flags) {
+    if (ct == kN32_SkColorType && format == SkMask::kA8_Format && (flags & kSrcIsOpaque_RowFlag) == 0) {
+        // A8_RowProc_Blend has been ported to SkOpts, but not the others yet.
+        return SkOpts::blit_row_s32a_a8;
+    }
+
 // make this opt-in until chrome can rebaseline
     RowProc proc = PlatformRowProcs(ct, format, flags);
     if (proc) {
@@ -285,7 +280,7 @@ SkBlitMask::RowProc SkBlitMask::RowFactory(SkColorType ct,
         // need X coordinate to handle BW
         false ? (RowProc)BW_RowProc_Blend : nullptr, // suppress unused warning
         false ? (RowProc)BW_RowProc_Opaque : nullptr, // suppress unused warning
-        (RowProc)A8_RowProc_Blend,      (RowProc)A8_RowProc_Opaque,
+        nullptr,                        (RowProc)A8_RowProc_Opaque,
         (RowProc)LCD16_RowProc_Blend,   (RowProc)LCD16_RowProc_Opaque,
     };
 

@@ -201,6 +201,16 @@ namespace SK_OPTS_NS {
     }
 }
 
+/*not static*/ inline
+void blit_row_s32a_a8(SkPMColor* dst, const void* maskIn, const SkPMColor* src, int len) {
+    const SkAlpha* msk = static_cast<const SkAlpha*>(maskIn);
+    for (int i = 0; i < len; ++i) {
+        if (msk[i]) {
+            dst[i] = SkBlendARGB32(src[i], dst[i], msk[i]);
+        }
+    }
+}
+
 }  // SK_OPTS_NS
 
 #endif//SkBlitMask_opts_DEFINED
