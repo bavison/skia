@@ -201,6 +201,24 @@ namespace SK_OPTS_NS {
     }
 }
 
+/*not static*/ inline
+void blit_row_s32a_a8(SkPMColor* dst, const void* vmask, const SkPMColor* src, int n) {
+    auto mask = (const uint8_t*)vmask;
+
+#ifdef SK_SUPPORT_LEGACY_A8_MASKBLITTER
+    for (int i = 0; i < n; ++i) {
+        if (mask[i]) {
+            dst[i] = SkBlendARGB32(src[i], dst[i], mask[i]);
+        }
+    }
+#else
+    Sk4px::MapDstSrcAlpha(n, dst, src, mask, [](const Sk4px& d, const Sk4px& s, const Sk4px& aa) {
+        const auto s_aa = s.approxMulDiv255(aa);
+        return s_aa + d.approxMulDiv255(s_aa.alphas().inv());
+    });
+#endif
+}
+
 }  // SK_OPTS_NS
 
 #endif//SkBlitMask_opts_DEFINED

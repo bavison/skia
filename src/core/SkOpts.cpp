@@ -54,6 +54,7 @@ namespace SkOpts {
     DEFINE_DEFAULT(create_xfermode);
 
     DEFINE_DEFAULT(blit_mask_d32_a8);
+    DEFINE_DEFAULT(blit_row_s32a_a8);
 
     DEFINE_DEFAULT(blit_row_s32a_opaque);
 
