@@ -252,6 +252,58 @@ static const SkBitmapProcState::MatrixProc MirrorX_MirrorY_Procs[] = {
     }
 
     static void decal_filter_scale_neon(uint32_t dst[], SkFixed fx, SkFixed dx, int count) {
+#ifndef __ARM_64BIT_STATE
+        SkASSERT(((fx + (count-1) * dx) >> (16 + 14)) == 0);
+        fx = (fx << 2) + 1;
+        dx <<= 2;
+        while (((uintptr_t) dst & 0xf) && --count >= 0) {
+            *dst++ = (fx & 0xffffc001) + (fx >> 18);
+            fx += dx;
+        }
+        if ((count -= 4) >= 0) {
+            uint32_t tmp;
+            __asm__ (
+                    "adr         %[tmp], 1f                  \n\t"
+                    "vmvn.i32    q10, #0x3fff                \n\t"
+                    "vld1.32     {q11}, [%[tmp]]             \n\t"
+                    "vdup.32     q8, %[fx]                   \n\t"
+                    "vdup.32     q9, %[dx]                   \n\t"
+                    "vsra.u32    q10, #31                    \n\t"
+                    "vmla.u32    q8, q9, q11                 \n\t"
+                    "vshl.u32    q9, #2                      \n\t"
+                    "b           2f                          \n\t"
+                    "1:                                      \n\t"
+                    ".long       0                           \n\t"
+                    ".long       1                           \n\t"
+                    ".long       2                           \n\t"
+                    ".long       3                           \n\t"
+                    "2:                                      \n\t"
+                    "vand        q11, q8, q10                \n\t"
+                    "vshr.u32    q12, q8, #18                \n\t"
+                    "vadd.i32    q11, q12                    \n\t"
+                    "vadd.i32    q8, q9                      \n\t"
+                    "subs        %[count], #4                \n\t"
+                    "vst1.32     {q11}, [%[dst]:128]!        \n\t"
+                    "bpl         2b                          \n\t"
+                    "vmov.32     %[fx], d16[0]               \n\t"
+            : // Outputs
+                    [count]"+l"(count),
+                      [dst]"+r"(dst),
+                       [fx]"+r"(fx),
+                      [tmp]"=&r"(tmp)
+            : // Inputs
+                    [dx]"r"(dx)
+            : // Clobbers
+                    "cc", "memory"
+            );
+        }
+        if ((count += 4-1) >= 0) {
+            do {
+                *dst++ = (fx & 0xffffc001) + (fx >> 18);
+                fx += dx;
+            } while (--count >= 0);
+        }
+#else // !defined(__ARM_64BIT_STATE)
         if (count >= 8) {
             SkFixed dx8 = dx * 8;
             int32x4_t vdx8 = vdupq_n_s32(dx8);
@@ -300,6 +352,7 @@ static const SkBitmapProcState::MatrixProc MirrorX_MirrorY_Procs[] = {
             *dst++ = (fx >> 12 << 14) | ((fx >> 16) + 1);
             fx += dx;
         }
+#endif
     }
 
     static inline int16x8_t clamp8(int32x4_t low, int32x4_t high, unsigned max) {
@@ -530,6 +583,111 @@ static const SkBitmapProcState::MatrixProc MirrorX_MirrorY_Procs[] = {
             return;
         }
 
+#ifndef __ARM_64BIT_STATE
+        if (tile == clamp && one == SK_Fixed1) {
+            SkASSERT(maxX < (1<<14)-1);
+            if (dx >= 0) {
+                --count;
+                while (count >= 0 && fx < 0) {
+                    *xy++ = 0;
+                    fx += dx;
+                    --count;
+                }
+                while (count >= 0 && ((uintptr_t) xy & 0xf) && fx < ((SkFractionalInt) maxX << 32)) {
+                    *xy++ = ((uint32_t)(fx >> 14) & 0xffffc000) + (uint32_t)(fx >> 32) + 1;
+                    fx += dx;
+                    --count;
+                }
+                if ((count -= 8-1) >= 0 && fx + 7*dx < ((SkFractionalInt) maxX << 32)) {
+                    SkFractionalInt rem = (((SkFractionalInt) maxX << 32) - 7*dx - fx - 1) / 8;
+                    int32_t rem_hi = rem >> 32;
+                    uint32_t rem_lo = (uint32_t) rem;
+                    int32_t fx_hi = fx >> 32;
+                    uint32_t fx_lo = (uint32_t) fx;
+                    __asm__ (
+                            "vmov        d16, %[fx_lo], %[fx_hi]     \n\t"
+                            "vmov        d24, %[dx_lo], %[dx_hi]     \n\t"
+                            "vadd.i64    d17, d16, d24               \n\t"
+                            "vmov        d25, %[dx_lo], %[dx_hi]     \n\t"
+                            "vmvn.i32    q13, #0x3fff                \n\t"
+                            "vadd.i64    d18, d17, d24               \n\t"
+                            "vmov.i32    q14, #1                     \n\t"
+                            "vadd.i64    d19, d18, d24               \n\t"
+                            "vshl.i64    q12, #2                     \n\t"
+                            "b           2f                          \n\t"
+                            "1:                                      \n\t"
+                            "vadd.i64    q8, q10, q12                \n\t"
+                            "vadd.i64    q9, q11, q12                \n\t"
+                            "2:                                      \n\t"
+                            "vadd.i64    q10, q8, q12                \n\t"
+                            "vadd.i64    q11, q9, q12                \n\t"
+                            "vshrn.i64   d16, q8, #14                \n\t"
+                            "vshrn.i64   d17, q9, #14                \n\t"
+                            "vand        q8, q13                     \n\t"
+                            "vorr        q8, q14                     \n\t"
+                            "vshrn.i64   d18, q10, #14               \n\t"
+                            "vshrn.i64   d19, q11, #14               \n\t"
+                            "vand        q9, q13                     \n\t"
+                            "subs        %[rem_lo], %[dx_lo]         \n\t"
+                            "vorr        q9, q14                     \n\t"
+                            "sbcs        %[rem_hi], %[dx_hi]         \n\t"
+                            "vsra.u32    q8, #18                     \n\t"
+                            "subs        %[count], #8                \n\t"
+                            "vsra.u32    q9, #18                     \n\t"
+                            "it          pl                          \n\t"
+                            "teqpl       %[rem_hi], #0               \n\t"
+                            "vst1.32     {q8-q9}, [%[dst]:128]!      \n\t"
+                            "bpl         1b                          \n\t"
+                            "vadd.i64    d16, d20, d24               \n\t"
+                            "vmov        %[fx_lo], %[fx_hi], d16     \n\t"
+                    : // Outputs
+                             [count]"+l"(count),
+                               [dst]"+r"(xy),
+                            [rem_hi]"+l"(rem_hi),
+                            [rem_lo]"+l"(rem_lo),
+                             [fx_hi]"+r"(fx_hi),
+                             [fx_lo]"+r"(fx_lo)
+                    : // Inputs
+                            [dx_hi]"l"((int32_t) (dx >> 32)),
+                            [dx_lo]"l"((uint32_t) dx)
+                    : // Clobbers
+                            "cc", "memory"
+                    );
+                    fx = ((SkFractionalInt) fx_hi << 32) | fx_lo;
+                }
+                count += 8-1;
+                while (count >= 0 && fx < ((SkFractionalInt) maxX << 32)) {
+                    *xy++ = ((uint32_t)(fx >> 14) & 0xffffc000) + (uint32_t)(fx >> 32) + 1;
+                    fx += dx;
+                    --count;
+                }
+                while (count >= 0) {
+                    *xy++ = (maxX << 18) + maxX;
+                    --count;
+                }
+            } else {
+                // Reflection case. Don't bother to optimize this as much -
+                // not even sure if it's used!
+                while (count >= 1 && fx >= ((SkFractionalInt) maxX << 32)) {
+                    *xy++ = (maxX << 18) + maxX;
+                    fx += dx;
+                    --count;
+                }
+                while (count >= 1 && fx >= 0) {
+                    *xy++ = ((uint32_t)(fx >> 14) & 0xffffc000) + (uint32_t)(fx >> 32) + 1;
+                    fx += dx;
+                    --count;
+                }
+                while (count >= 1) {
+                    *xy++ = 0;
+                    --count;
+                }
+            }
+        }
+        else
+        {
+        // Drop back to old code for repeat or other values of 'one'
+#endif
         if (count >= 4) {
             int32x4_t wide_fx;
 
@@ -556,6 +714,9 @@ static const SkBitmapProcState::MatrixProc MirrorX_MirrorY_Procs[] = {
             *xy++ = pack(SkFractionalIntToFixed(fx), maxX, one);
             fx += dx;
         }
+#ifndef __ARM_64BIT_STATE
+        }
+#endif
     }
 
     static const SkBitmapProcState::MatrixProc ClampX_ClampY_Procs[] = {
