@@ -97,6 +97,7 @@ static inline uint8x8_t SkPMSrcOver_neon2(uint8x8_t dst, uint8x8_t src) {
 #define NO(x)
 
 // How far ahead (pixels) to preload (undefine to disable prefetch) - determined empirically
+#undef PREFETCH_DISTANCE
 #define PREFETCH_DISTANCE "24"
 
 #ifdef PREFETCH_DISTANCE
